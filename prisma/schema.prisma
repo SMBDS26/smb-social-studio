@@ -1,0 +1,258 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── MULTI-TENANCY ──────────────────────────────────────────────
+
+model Account {
+  id                   String             @id @default(cuid())
+  name                 String
+  slug                 String             @unique
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  subscriptionStatus   SubscriptionStatus @default(TRIALING)
+  trialEndsAt          DateTime?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  users         User[]
+  brands        Brand[]
+  invites       Invite[]
+  billingEvents BillingEvent[]
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String?
+  avatarUrl      String?
+  hashedPassword String?
+  role           Role     @default(MEMBER)
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions Session[]
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model Invite {
+  id         String    @id @default(cuid())
+  email      String
+  token      String    @unique @default(cuid())
+  role       Role      @default(MEMBER)
+  accountId  String
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── BRAND PROFILES ─────────────────────────────────────────────
+
+model Brand {
+  id              String    @id @default(cuid())
+  accountId       String
+  account         Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name            String
+  industry        String?
+  logoUrl         String?
+  websiteUrl      String?
+  businessSummary String?   @db.Text
+  colorPrimary    String?
+  colorSecondary  String?
+  tone            BrandTone @default(FRIENDLY)
+  targetAudiences Json      @default("[]")
+  facebookUrl     String?
+  instagramUrl    String?
+  linkedinUrl     String?
+  twitterUrl      String?
+  tiktokUrl       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  connections SocialConnection[]
+  campaigns   Campaign[]
+  mediaAssets MediaAsset[]
+
+  @@index([accountId])
+}
+
+enum BrandTone {
+  PROFESSIONAL
+  FRIENDLY
+  BOLD
+  PLAYFUL
+  AUTHORITATIVE
+  CASUAL
+  INSPIRATIONAL
+}
+
+// ─── SOCIAL OAUTH CONNECTIONS ───────────────────────────────────
+
+model SocialConnection {
+  id                String    @id @default(cuid())
+  brandId           String
+  brand             Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  platform          Platform
+  platformAccountId String
+  platformName      String
+  platformAvatarUrl String?
+  accessToken       String    @db.Text
+  refreshToken      String?   @db.Text
+  tokenExpiresAt    DateTime?
+  scopes            String?
+  isActive          Boolean   @default(true)
+  connectedAt       DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  posts Post[]
+
+  @@unique([brandId, platform, platformAccountId])
+  @@index([brandId])
+}
+
+enum Platform {
+  INSTAGRAM
+  FACEBOOK
+  LINKEDIN
+  TWITTER
+  TIKTOK
+}
+
+// ─── CAMPAIGNS ──────────────────────────────────────────────────
+
+model Campaign {
+  id              String         @id @default(cuid())
+  brandId         String
+  brand           Brand          @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name            String         @default("Monthly Social Media Calendar")
+  briefData       Json           @default("{}")
+  status          CampaignStatus @default(DRAFT)
+  generationModel String         @default("claude-sonnet-4-5")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  posts Post[]
+
+  @@index([brandId])
+}
+
+enum CampaignStatus {
+  DRAFT
+  GENERATING
+  READY
+  PARTIALLY_PUBLISHED
+  PUBLISHED
+}
+
+// ─── POSTS ──────────────────────────────────────────────────────
+
+model Post {
+  id                 String            @id @default(cuid())
+  campaignId         String
+  campaign           Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  socialConnectionId String?
+  socialConnection   SocialConnection? @relation(fields: [socialConnectionId], references: [id])
+  platform           Platform
+  postType           PostType          @default(SINGLE_IMAGE)
+  copyText           String            @db.Text
+  imagePrompt        String?           @db.Text
+  mediaUrls          Json              @default("[]")
+  hashtags           Json              @default("[]")
+  ctaLabel           String?
+  ctaUrl             String?
+  scheduledAt        DateTime?
+  publishedAt        DateTime?
+  platformPostId     String?
+  status             PostStatus        @default(DRAFT)
+  publishError       String?
+  aiGenerated        Boolean           @default(true)
+  generationVersion  Int               @default(1)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([campaignId])
+  @@index([socialConnectionId])
+  @@index([status, scheduledAt])
+}
+
+enum PostType {
+  SINGLE_IMAGE
+  CAROUSEL
+  VIDEO
+  REEL
+  STORY
+  TEXT_ONLY
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+// ─── MEDIA ASSETS ───────────────────────────────────────────────
+
+model MediaAsset {
+  id         String   @id @default(cuid())
+  brandId    String
+  brand      Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  url        String
+  storageKey String
+  mimeType   String
+  sizeBytes  Int
+  width      Int?
+  height     Int?
+  duration   Float?
+  uploadedAt DateTime @default(now())
+
+  @@index([brandId])
+}
+
+// ─── BILLING EVENTS ─────────────────────────────────────────────
+
+model BillingEvent {
+  id            String   @id @default(cuid())
+  accountId     String
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  stripeEventId String   @unique
+  type          String
+  amountGbp     Float?
+  status        String
+  occurredAt    DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+}
