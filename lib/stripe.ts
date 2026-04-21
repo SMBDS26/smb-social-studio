@@ -1,13 +1,27 @@
 import Stripe from "stripe";
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2026-03-25.dahlia",
-  typescript: true,
-});
-
 export const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID!;
 
-// Get or create a Stripe customer for an account
+let _stripe: Stripe | null = null;
+
+export function getStripe(): Stripe {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) throw new Error("STRIPE_SECRET_KEY is not set");
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2026-03-25.dahlia",
+      typescript: true,
+    });
+  }
+  return _stripe;
+}
+
+// Keep named export for backwards compatibility
+export const stripe = new Proxy({} as Stripe, {
+  get(_, prop) {
+    return getStripe()[prop as keyof Stripe];
+  },
+});
+
 export async function getOrCreateStripeCustomer(
   accountId: string,
   email: string,
@@ -22,7 +36,7 @@ export async function getOrCreateStripeCustomer(
 
   if (account?.stripeCustomerId) return account.stripeCustomerId;
 
-  const customer = await stripe.customers.create({
+  const customer = await getStripe().customers.create({
     email,
     name,
     metadata: { accountId },
@@ -36,7 +50,6 @@ export async function getOrCreateStripeCustomer(
   return customer.id;
 }
 
-// Last day of current month timestamp for billing anchor
 export function getEndOfMonthTimestamp(): number {
   const now = new Date();
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
