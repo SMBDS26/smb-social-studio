@@ -4,17 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Campaign, Brand, Post, SocialConnection, Platform } from "@prisma/client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import {
-  Calendar, Send, CheckCircle, AlertCircle, Loader2,
-  ChevronLeft, Clock, ArrowRight
-} from "lucide-react";
+import { Copy, Check, ExternalLink, ChevronLeft, ArrowRight, Hash } from "lucide-react";
 import { PLATFORM_COLORS, PLATFORM_LABELS } from "@/types";
 import { toast } from "sonner";
-import { format, addDays, setHours, setMinutes } from "date-fns";
 
 type CampaignWithAll = Campaign & {
   brand: Brand & { connections: SocialConnection[] };
@@ -23,218 +18,159 @@ type CampaignWithAll = Campaign & {
 
 interface Props { campaign: CampaignWithAll }
 
+const PLATFORM_POST_URLS: Record<string, string> = {
+  INSTAGRAM: "https://www.instagram.com/",
+  FACEBOOK: "https://www.facebook.com/",
+  LINKEDIN: "https://www.linkedin.com/feed/",
+  TWITTER: "https://x.com/compose/tweet",
+  TIKTOK: "https://www.tiktok.com/upload",
+};
+
+const PLATFORM_INSTRUCTIONS: Record<string, string> = {
+  INSTAGRAM: "Open Instagram → tap + → Post, then paste your caption",
+  FACEBOOK: "Open Facebook → tap What's on your mind? then paste",
+  LINKEDIN: "Open LinkedIn → tap Start a post, then paste",
+  TWITTER: "Open X/Twitter → tap Post, then paste (280 char limit)",
+  TIKTOK: "Open TikTok → tap + → Upload your video, then paste caption",
+};
+
 export function SchedulePageClient({ campaign }: Props) {
   const router = useRouter();
-  const [posts, setPosts] = useState(campaign.posts);
-  const [bulkDate, setBulkDate] = useState("");
-  const [bulkTime, setBulkTime] = useState("09:00");
-  const [publishing, setPublishing] = useState<Set<string>>(new Set());
-  const [schedulingAll, setSchedulingAll] = useState(false);
+  const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
 
-  const connections = campaign.brand.connections;
+  const platforms = [...new Set(campaign.posts.map((p) => p.platform))] as Platform[];
 
-  const getConnection = (platform: Platform) =>
-    connections.find((c) => c.platform === platform);
+  const copyPost = (post: Post) => {
+    const hashtags = post.hashtags as string[] | null;
+    const text = [
+      post.copyText,
+      hashtags?.length ? "\n\n" + hashtags.map((h) => `#${h}`).join(" ") : "",
+      post.ctaUrl ? `\n\n${post.ctaUrl}` : "",
+    ].join("");
 
-  const schedulePost = async (postId: string, scheduledAt: string) => {
-    const res = await fetch(`/api/posts/${postId}/schedule`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scheduledAt }),
-    });
-    if (!res.ok) throw new Error("Failed to schedule");
-    const updated = await res.json();
-    setPosts((prev) => prev.map((p) => (p.id === postId ? updated : p)));
+    navigator.clipboard.writeText(text.trim());
+    setCopiedIds((prev) => new Set([...prev, post.id]));
+    toast.success("Copied to clipboard!");
+    setTimeout(() => setCopiedIds((prev) => { const n = new Set(prev); n.delete(post.id); return n; }), 2000);
   };
 
-  const publishNow = async (postId: string) => {
-    setPublishing((prev) => new Set([...prev, postId]));
-    try {
-      const res = await fetch(`/api/posts/${postId}/publish`, { method: "POST" });
-      if (!res.ok) throw new Error("Publish failed");
-      const updated = await res.json();
-      setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, status: "PUBLISHED" } : p)));
-      toast.success("Post published successfully!");
-    } catch (err) {
-      toast.error("Failed to publish post");
-    } finally {
-      setPublishing((prev) => { const n = new Set(prev); n.delete(postId); return n; });
-    }
+  const copyAll = (platformPosts: Post[]) => {
+    const text = platformPosts.map((post, i) => {
+      const tags = post.hashtags as string[] | null;
+      const hashtags = tags?.length
+        ? "\n" + tags.map((h) => `#${h}`).join(" ")
+        : "";
+      const cta = post.ctaUrl ? `\n${post.ctaUrl}` : "";
+      return `--- Post ${i + 1} ---\n${post.copyText}${hashtags}${cta}`;
+    }).join("\n\n");
+
+    navigator.clipboard.writeText(text);
+    toast.success(`Copied all ${platformPosts.length} posts!`);
   };
-
-  const scheduleAll = async () => {
-    if (!bulkDate) { toast.error("Please select a start date"); return; }
-    setSchedulingAll(true);
-    try {
-      const draftPosts = posts.filter((p) => p.status === "DRAFT");
-      const [hours, mins] = bulkTime.split(":").map(Number);
-
-      for (let i = 0; i < draftPosts.length; i++) {
-        // Space posts out: every other day, cycling through 9am, 12pm, 3pm, 6pm
-        const dayOffset = Math.floor(i / 4);
-        const timeSlots = [9, 12, 15, 18];
-        const slotHour = timeSlots[i % 4];
-        const date = setHours(setMinutes(addDays(new Date(bulkDate), dayOffset), 0), slotHour);
-        await schedulePost(draftPosts[i].id, date.toISOString());
-      }
-      toast.success(`Scheduled ${draftPosts.length} posts!`);
-    } catch {
-      toast.error("Some posts failed to schedule");
-    } finally {
-      setSchedulingAll(false);
-    }
-  };
-
-  const scheduledCount = posts.filter((p) => p.status === "SCHEDULED").length;
-  const publishedCount = posts.filter((p) => p.status === "PUBLISHED").length;
-  const draftCount = posts.filter((p) => p.status === "DRAFT").length;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Schedule & publish</h1>
-          <p className="text-gray-500 text-sm mt-1">{posts.length} posts · {campaign.brand.name}</p>
+          <h1 className="text-2xl font-bold text-gray-900">Your content is ready</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            {campaign.posts.length} posts for {platforms.length} platforms · {campaign.brand.name}
+          </p>
         </div>
         <Button variant="outline" onClick={() => router.push(`/create/${campaign.id}/preview`)}>
-          <ChevronLeft className="w-4 h-4 mr-1" /> Preview
+          <ChevronLeft className="w-4 h-4 mr-1" /> Back to preview
         </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: "Draft", count: draftCount, color: "text-gray-600" },
-          { label: "Scheduled", count: scheduledCount, color: "text-blue-600" },
-          { label: "Published", count: publishedCount, color: "text-green-600" },
-        ].map(({ label, count, color }) => (
-          <div key={label} className="text-center p-3 bg-gray-50 rounded-lg">
-            <p className={`text-2xl font-bold ${color}`}>{count}</p>
-            <p className="text-xs text-gray-500">{label}</p>
-          </div>
-        ))}
+      {/* Instruction banner */}
+      <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
+        <p className="text-sm text-violet-800 font-medium mb-1">How to post your content</p>
+        <p className="text-sm text-violet-700">
+          Copy each post below, then click the link to open that platform and paste it in.
+          Your hashtags and links are included automatically.
+        </p>
       </div>
 
-      {/* Bulk schedule */}
-      {draftCount > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Schedule all posts at once</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-gray-500">
-              Set a start date and AI will spread your {draftCount} posts evenly across the month.
-            </p>
-            <div className="flex gap-3 flex-wrap">
-              <div className="space-y-1">
-                <label className="text-xs text-gray-500">Start date</label>
-                <Input type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} className="w-auto" min={new Date().toISOString().split("T")[0]} />
+      {/* Posts grouped by platform */}
+      {platforms.map((platform) => {
+        const platformPosts = campaign.posts.filter((p) => p.platform === platform);
+        const color = PLATFORM_COLORS[platform];
+        const label = PLATFORM_LABELS[platform];
+        const postUrl = PLATFORM_POST_URLS[platform];
+        const instruction = PLATFORM_INSTRUCTIONS[platform];
+
+        return (
+          <Card key={platform} className="overflow-hidden">
+            <CardHeader className="pb-3 border-b border-gray-100">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+                  <CardTitle className="text-base">{label}</CardTitle>
+                  <Badge variant="secondary" className="text-xs">{platformPosts.length} posts</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8"
+                    onClick={() => copyAll(platformPosts)}
+                  >
+                    <Copy className="w-3 h-3 mr-1" /> Copy all
+                  </Button>
+                  <a href={postUrl} target="_blank" rel="noopener noreferrer">
+                    <Button size="sm" className="text-xs h-8" style={{ backgroundColor: color, borderColor: color }}>
+                      Open {label} <ExternalLink className="w-3 h-3 ml-1" />
+                    </Button>
+                  </a>
+                </div>
               </div>
-            </div>
-            <Button
-              onClick={scheduleAll}
-              disabled={schedulingAll || !bulkDate}
-              className="bg-violet-600 hover:bg-violet-700"
-            >
-              {schedulingAll ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Calendar className="w-4 h-4 mr-2" />}
-              {schedulingAll ? "Scheduling..." : `Schedule all ${draftCount} posts`}
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+              <p className="text-xs text-gray-400 mt-1">{instruction}</p>
+            </CardHeader>
+            <CardContent className="p-0">
+              {platformPosts.map((post, i) => {
+                const copied = copiedIds.has(post.id);
+                const hashtags = post.hashtags as string[] | null;
+                return (
+                  <div key={post.id} className={`p-4 ${i < platformPosts.length - 1 ? "border-b border-gray-100" : ""}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-400 mb-1">Post {i + 1}</p>
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{post.copyText}</p>
+                        {hashtags && hashtags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {hashtags.map((tag: string) => (
+                              <span key={tag} className="text-xs text-violet-600 flex items-center gap-0.5">
+                                <Hash className="w-2.5 h-2.5" />{tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {post.ctaUrl && (
+                          <p className="text-xs text-blue-500 mt-1">{post.ctaUrl}</p>
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className={`flex-shrink-0 h-8 text-xs transition-colors ${copied ? "border-green-300 text-green-600 bg-green-50" : ""}`}
+                        onClick={() => copyPost(post)}
+                      >
+                        {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+                        {copied ? "Copied!" : "Copy"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        );
+      })}
 
       <Separator />
 
-      {/* Individual posts */}
-      <div className="space-y-3">
-        <h3 className="font-semibold text-gray-900">Posts</h3>
-        {posts.map((post) => {
-          const connection = getConnection(post.platform as Platform);
-          const isPublishing = publishing.has(post.id);
-
-          return (
-            <div key={post.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 bg-white border border-gray-200 rounded-xl">
-              {/* Platform indicator */}
-              <div
-                className="w-3 h-3 rounded-full flex-shrink-0 mt-1 sm:mt-0"
-                style={{ backgroundColor: PLATFORM_COLORS[post.platform as Platform] }}
-              />
-
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-medium text-gray-500">{PLATFORM_LABELS[post.platform as Platform]}</span>
-                  <PostStatusBadge status={post.status} />
-                </div>
-                <p className="text-sm text-gray-700 line-clamp-2">{post.copyText}</p>
-                {post.scheduledAt && (
-                  <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {format(new Date(post.scheduledAt), "d MMM yyyy 'at' HH:mm")}
-                  </p>
-                )}
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {post.status === "DRAFT" && (
-                  <>
-                    <Input
-                      type="datetime-local"
-                      className="text-xs h-8 w-auto"
-                      min={new Date().toISOString().slice(0, 16)}
-                      onChange={async (e) => {
-                        if (e.target.value) {
-                          try {
-                            await schedulePost(post.id, new Date(e.target.value).toISOString());
-                            toast.success("Post scheduled");
-                          } catch {
-                            toast.error("Failed to schedule");
-                          }
-                        }
-                      }}
-                    />
-                    {connection && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => publishNow(post.id)}
-                        disabled={isPublishing}
-                        className="text-xs h-8 whitespace-nowrap"
-                      >
-                        {isPublishing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
-                        Publish now
-                      </Button>
-                    )}
-                  </>
-                )}
-
-                {post.status === "SCHEDULED" && connection && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => publishNow(post.id)}
-                    disabled={isPublishing}
-                    className="text-xs h-8 whitespace-nowrap"
-                  >
-                    {isPublishing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
-                    Publish now
-                  </Button>
-                )}
-
-                {!connection && post.status !== "PUBLISHED" && (
-                  <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
-                    Not connected
-                  </Badge>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Done button */}
+      {/* Done */}
       <div className="flex justify-end pt-2">
         <Button
           className="bg-violet-600 hover:bg-violet-700"
@@ -244,22 +180,5 @@ export function SchedulePageClient({ campaign }: Props) {
         </Button>
       </div>
     </div>
-  );
-}
-
-function PostStatusBadge({ status }: { status: string }) {
-  const config = {
-    DRAFT: { label: "Draft", className: "bg-gray-100 text-gray-600" },
-    SCHEDULED: { label: "Scheduled", className: "bg-blue-100 text-blue-700" },
-    PUBLISHING: { label: "Publishing...", className: "bg-yellow-100 text-yellow-700" },
-    PUBLISHED: { label: "Published", className: "bg-green-100 text-green-700" },
-    FAILED: { label: "Failed", className: "bg-red-100 text-red-700" },
-    CANCELLED: { label: "Cancelled", className: "bg-gray-100 text-gray-500" },
-  }[status] ?? { label: status, className: "bg-gray-100 text-gray-600" };
-
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${config.className}`}>
-      {config.label}
-    </span>
   );
 }

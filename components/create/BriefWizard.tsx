@@ -321,11 +321,6 @@ export function BriefWizard({ campaign, brand }: BriefWizardProps) {
                           <span className="text-xs text-amber-600 ml-2">(video only)</span>
                         )}
                       </div>
-                      {connected ? (
-                        <Badge variant="outline" className="text-xs text-green-600 border-green-200">Connected</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-xs text-gray-400">Not connected</Badge>
-                      )}
                       <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
                         selected ? "border-violet-600 bg-violet-600" : "border-gray-300"
                       }`}>

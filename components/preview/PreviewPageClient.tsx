@@ -86,7 +86,7 @@ export function PreviewPageClient({ campaign }: Props) {
           className="bg-violet-600 hover:bg-violet-700"
           onClick={() => router.push(`/create/${campaign.id}/schedule`)}
         >
-          Schedule posts <ArrowRight className="w-4 h-4 ml-2" />
+          Export content <ArrowRight className="w-4 h-4 ml-2" />
         </Button>
       </div>
 
